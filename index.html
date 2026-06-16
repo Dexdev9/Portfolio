@@ -380,6 +380,7 @@ document.documentElement.style.setProperty('--accent',accentHex);
 document.getElementById('hudRole').textContent=CONFIG.role;
 
 /* ---- sound: synthesized engine hum + soft ambient music (no audio files) ---- */
+/* ---- sound: synthesized engine hum + soft ambient music (no audio files) ---- */
 const Sound = {
   ctx:null, master:null, music:null, engGain:null, engOsc1:null, engOsc2:null, engFilt:null,
   enabled:true, started:false, scale:[],
@@ -391,66 +392,105 @@ const Sound = {
         this.master=this.ctx.createGain();
         this.master.gain.value=this.enabled?0.85:0.0;
         this.master.connect(this.ctx.destination);
-        // engine: ONE soft oscillator through a lowpass, volume follows speed
-        this.engGain=this.ctx.createGain(); this.engGain.gain.value=0; this.engGain.connect(this.master);
-        this.engFilt=this.ctx.createBiquadFilter(); this.engFilt.type='lowpass'; this.engFilt.frequency.value=420; this.engFilt.connect(this.engGain);
-        this.engOsc1=this.ctx.createOscillator(); this.engOsc1.type='sawtooth'; this.engOsc1.frequency.value=46; this.engOsc1.connect(this.engFilt); this.engOsc1.start();
-        // music bus: warm chord pad + playful music-box melody
-        this.music=this.ctx.createGain(); this.music.gain.value=0.4; this.music.connect(this.master);
+
+        // ENGINE: Dual-oscillator for a mechanical growl, heavily filtered
+        this.engGain=this.ctx.createGain(); 
+        this.engGain.gain.value=0; // Start completely silent
+        this.engGain.connect(this.master);
+
+        this.engFilt=this.ctx.createBiquadFilter(); 
+        this.engFilt.type='lowpass'; 
+        this.engFilt.frequency.value=150; 
+        this.engFilt.connect(this.engGain);
+
+        this.engOsc1=this.ctx.createOscillator(); 
+        this.engOsc1.type='sawtooth'; 
+        this.engOsc1.connect(this.engFilt); 
+        this.engOsc1.start();
+
+        this.engOsc2=this.ctx.createOscillator(); 
+        this.engOsc2.type='square'; // Adds body/chug to the sound
+        this.engOsc2.connect(this.engFilt); 
+        this.engOsc2.start();
+
+        // MUSIC: Warm, ambient, relaxed
+        this.music=this.ctx.createGain(); this.music.gain.value=0.35; this.music.connect(this.master);
         this.started=true;
         this._pad(); this._loop();
       }
       if(this.ctx && this.ctx.state==='suspended') this.ctx.resume();
     }catch(e){ /* audio is optional, never break the app */ }
   },
-  _pad(){ // warm 3-voice pad; the loop drives it through a happy I V vi IV progression
+  _pad(){ 
+    // Warm, slow changing chords (Triangle waves are much softer than Sines/Saws)
     this.prog=[
-      {pad:[130.81,164.81,196.00], hi:[523.25,659.25,783.99]}, // C major  -> C5 E5 G5
-      {pad:[ 98.00,146.83,196.00], hi:[587.33,783.99,587.33]}, // G major  -> D5 G5 D5
-      {pad:[110.00,130.81,164.81], hi:[523.25,659.25,880.00]}, // A minor  -> C5 E5 A5
-      {pad:[ 87.31,130.81,174.61], hi:[523.25,698.46,880.00]}  // F major  -> C5 F5 A5
+      {pad:[174.61, 220.00, 261.63], notes:[349.23, 440.00, 523.25]}, // F major
+      {pad:[130.81, 164.81, 196.00], notes:[392.00, 440.00, 523.25]}  // C major
     ];
     this.chordIx=0; this.padOsc=[];
     for(let i=0;i<3;i++){
-      const o=this.ctx.createOscillator(); o.type='sine'; o.frequency.value=this.prog[0].pad[i];
+      const o=this.ctx.createOscillator(); o.type='triangle'; 
+      o.frequency.value=this.prog[0].pad[i];
       const g=this.ctx.createGain(); g.gain.value=0; o.connect(g); g.connect(this.music); o.start();
-      g.gain.setTargetAtTime(0.036,this.ctx.currentTime,6);
-      const lfo=this.ctx.createOscillator(); lfo.frequency.value=0.04+i*0.02;
-      const lg=this.ctx.createGain(); lg.gain.value=1.6; lfo.connect(lg); lg.connect(o.detune); lfo.start();
+      g.gain.setTargetAtTime(0.04,this.ctx.currentTime,3); // Very slow, soft fade in
       this.padOsc.push(o);
     }
   },
-  _bell(t,f,v){ // soft music-box pluck (sine + a brighter octave partial)
+  _bell(t,f,v){ 
+    // A soft, rounded electric piano / marimba pluck
     const o=this.ctx.createOscillator(); o.type='sine'; o.frequency.value=f;
-    const o2=this.ctx.createOscillator(); o2.type='sine'; o2.frequency.value=f*2;
     const g=this.ctx.createGain(); o.connect(g); g.connect(this.music);
-    const g2=this.ctx.createGain(); o2.connect(g2); g2.connect(this.music);
-    g.gain.setValueAtTime(0,t); g.gain.linearRampToValueAtTime(v,t+0.012); g.gain.exponentialRampToValueAtTime(0.0001,t+0.6);
-    g2.gain.setValueAtTime(0,t); g2.gain.linearRampToValueAtTime(v*0.28,t+0.012); g2.gain.exponentialRampToValueAtTime(0.0001,t+0.3);
-    o.start(t); o.stop(t+0.7); o2.start(t); o2.stop(t+0.35);
+    g.gain.setValueAtTime(0,t); 
+    g.gain.linearRampToValueAtTime(v,t+0.03); 
+    g.gain.exponentialRampToValueAtTime(0.001,t+1.5); // Long, warm decay
+    o.start(t); o.stop(t+1.6);
   },
-  _loop(){ // one chord per pass: glide the pad, sprinkle a bouncy arpeggio, then move on
+  _loop(){ 
+    // Slower, sparse, relaxing melody
     if(!this.started) return;
     const ch=this.prog[this.chordIx], now=this.ctx.currentTime;
-    this.padOsc.forEach((o,i)=>o.frequency.setTargetAtTime(ch.pad[i],now,1.4));
-    const pat=[0,1,2,1,0,2,1,2];     // gentle bounce
-    const step=0.34; let t=now+0.06;
+    this.padOsc.forEach((o,i)=>o.frequency.setTargetAtTime(ch.pad[i],now,2.5));
+    
+    const pat=[0, null, 1, null, 2, 1, null, 0];
+    const step=0.5; // Slow down the tempo
+    let t=now+0.1;
     for(let i=0;i<pat.length;i++){
-      if(Math.random()<0.16){ t+=step; continue; }   // breathe now and then
-      const f=ch.hi[pat[i]]*(Math.random()<0.1?2:1); // occasional octave sparkle
-      this._bell(t,f,0.02+Math.random()*0.012);
+      if(pat[i]!==null && Math.random()<0.6){ // Play notes sparsely
+        this._bell(t, ch.notes[pat[i]], 0.03 + Math.random()*0.02);
+      }
       t+=step;
     }
-    t+=step*1.5;                      // short rest before the next chord
     this.chordIx=(this.chordIx+1)%this.prog.length;
     setTimeout(()=>this._loop(),(t-now)*1000);
   },
   updateEngine(speed,maxF){
     if(!this.started) return;
-    const sp=Math.min(1,Math.abs(speed)/maxF), now=this.ctx.currentTime;
-    this.engOsc1.frequency.setTargetAtTime(46+sp*110,now,0.06);
-    this.engFilt.frequency.setTargetAtTime(320+sp*1200,now,0.06);
-    this.engGain.gain.setTargetAtTime(0.005+sp*0.015,now,0.08);
+    const now=this.ctx.currentTime;
+    const absSpeed = Math.abs(speed);
+    const sp=Math.min(1,absSpeed/maxF);
+    
+    // Read the global 'state' to get the actual gas pedal input
+    // This makes the engine roar instantly when you press 'W'
+    const gasPedal = typeof state !== 'undefined' ? Math.abs(state.input.throttle) : 0;
+    
+    // Snappy response times kill the "delay"
+    const snap = 0.02;
+
+    // 1. Pitch: Tied mostly to speed, slight bump from gas pedal
+    const baseFreq = 25 + (sp * 130) + (gasPedal * 15);
+    this.engOsc1.frequency.setTargetAtTime(baseFreq, now, snap);
+    this.engOsc2.frequency.setTargetAtTime(baseFreq * 0.98, now, snap); // Detune creates the mechanical "growl"
+
+    // 2. Growl (Filter): Opens up instantly when you hit the gas
+    const cutoff = 150 + (gasPedal * 400) + (sp * 500);
+    this.engFilt.frequency.setTargetAtTime(cutoff, now, snap);
+
+    // 3. Volume: Drops completely to 0 if we aren't moving and aren't pressing the gas
+    let vol = 0;
+    if(absSpeed > 0.1 || gasPedal > 0.1){
+       vol = 0.005 + (gasPedal * 0.015) + (sp * 0.01);
+    }
+    this.engGain.gain.setTargetAtTime(vol, now, snap);
   },
   toggle(){
     this.enabled=!this.enabled;
